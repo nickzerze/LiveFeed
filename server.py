@@ -6,7 +6,7 @@ import os
 app = Flask(__name__)
 
 USE_VIDEO = True  # 🔁 Set to False for webcam
-VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test.mp4"  # 🔁 Replace with your video path
+VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"
 #cap = cv2.VideoCapture(0)
 
 # Shared variables
@@ -20,6 +20,8 @@ def capture_loop():
     global current_frame, tracker, bbox
 
     cap = cv2.VideoCapture(VIDEO_PATH if USE_VIDEO else 0)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    delay = int(1000 / fps) if fps > 0 else 33  # milliseconds
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)  # or 1920
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)  # or 1080
@@ -33,7 +35,7 @@ def capture_loop():
         # Loop video if at end
         if not ret:
             if USE_VIDEO:
-                print("[INFO] Rewinding video...")
+                print("[INFO] Streaming video in the loop...")
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 continue
             else:
@@ -61,7 +63,9 @@ def capture_loop():
         cv2.imshow("Live Feed", frame)
         #if cv2.waitKey(1) & 0xFF == ord('q'):
         #    break
-        key = cv2.waitKey(1) & 0xFF
+        key = cv2.waitKey(delay) & 0xFF  # ← match video FPS here
+        if key == ord('q') or cv2.getWindowProperty("Live Feed", cv2.WND_PROP_VISIBLE) < 1:
+            break
 
         # If 'q' key is pressed or window is closed, break loop
         if key == ord('q') or cv2.getWindowProperty("Live Feed", cv2.WND_PROP_VISIBLE) < 1:
