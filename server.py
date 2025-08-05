@@ -4,11 +4,14 @@ import threading
 import os
 
 app = Flask(__name__)
-cap = cv2.VideoCapture(0)
+
+USE_VIDEO = True  # 🔁 Set to False for webcam
+VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test.mp4"  # 🔁 Replace with your video path
+#cap = cv2.VideoCapture(0)
 
 # Shared variables
 tracker = None
-initBB = None
+bbox = None
 lock = threading.Lock()
 current_frame = None
 
@@ -16,19 +19,26 @@ current_frame = None
 def capture_loop():
     global current_frame, tracker, bbox
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(VIDEO_PATH if USE_VIDEO else 0)
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)  # or 1920
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)  # or 1080
+
     if not cap.isOpened():
-        print("[ERROR] Could not open camera.")
-        os._exit(0)
-        #return
+        print("[ERROR] Could not open video source.")
+        return
 
     while True:
         ret, frame = cap.read()
+        # Loop video if at end
         if not ret:
-            print("[ERROR] Failed to read frame from camera")
-            continue
+            if USE_VIDEO:
+                print("[INFO] Rewinding video...")
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
+            else:
+                print("[ERROR] Failed to read frame from camera")
+                continue
 
 
         #current_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
