@@ -21,7 +21,8 @@ def capture_loop():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)  # or 1080
     if not cap.isOpened():
         print("[ERROR] Could not open camera.")
-        return
+        os._exit(0)
+        #return
 
     while True:
         ret, frame = cap.read()
