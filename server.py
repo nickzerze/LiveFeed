@@ -2,13 +2,15 @@ import cv2
 from flask import Flask, Response, request
 import threading
 import os
+from dronekit import connect, VehicleMode, LocationGlobalRelative
+import time
 
 app = Flask(__name__)
 
 USE_VIDEO = True  # 🔁 Set to False for webcam
 
 VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"  # 🔁 Replace with your video path
-VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"
+#VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"
 
 #cap = cv2.VideoCapture(0)
 
@@ -17,6 +19,8 @@ tracker = None
 bbox = None
 lock = threading.Lock()
 current_frame = None
+
+ALTITUDE = 100               # Fixed flight altitude in meters
 
 # Background thread: reads frames and shows OpenCV window
 def capture_loop():
@@ -140,6 +144,38 @@ def set_bbox():
         bbox = None
         return "Tracker init error", 500
 
+@app.route('/launch', methods=['POST'])
+def launch_plane():
+    try:
+        print("[INFO] Connecting to simulated rocket...")
+        vehicle = connect('127.0.0.1:5760', wait_ready=True)
+
+        print("[INFO] Setting GUIDED mode...")
+        vehicle.mode = VehicleMode("GUIDED")
+        while not vehicle.mode.name == "GUIDED":
+            time.sleep(0.5)
+
+        print("[INFO] Arming rocket...")
+        vehicle.armed = True
+        while not vehicle.armed:
+            time.sleep(0.5)
+
+        print(f"[INFO] Taking off to {ALTITUDE}m...")
+        vehicle.simple_takeoff(ALTITUDE)
+
+        while True:
+            alt = vehicle.location.global_relative_frame.alt
+            print(f"    ↳ Current altitude: {alt:.2f}")
+            if alt >= ALTITUDE * 0.95:
+                print("[INFO] Launch altitude reached.")
+                break
+            time.sleep(1)
+
+        return "🚀 Rocket launched and at altitude", 200
+
+    except Exception as e:
+        print(f"[ERROR] Launch error: {e}")
+        return f"Launch failed: {str(e)}", 500
 
 
 
