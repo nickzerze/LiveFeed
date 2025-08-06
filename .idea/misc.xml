@@ -3,5 +3,9 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.11 (LiveFeed)" />
   </component>
+<<<<<<< HEAD
   <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.11 (2)" project-jdk-type="Python SDK" />
+=======
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.13" project-jdk-type="Python SDK" />
+>>>>>>> 805e3c97518865e116741a80c917e5803e86adfe
 </project>
