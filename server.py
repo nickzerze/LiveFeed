@@ -6,11 +6,10 @@ import os
 app = Flask(__name__)
 
 USE_VIDEO = True  # 🔁 Set to False for webcam
-<<<<<<< HEAD
+
 VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"  # 🔁 Replace with your video path
-=======
 VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"
->>>>>>> 805e3c97518865e116741a80c917e5803e86adfe
+
 #cap = cv2.VideoCapture(0)
 
 # Shared variables
