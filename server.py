@@ -6,7 +6,7 @@ import os
 app = Flask(__name__)
 
 USE_VIDEO = True  # 🔁 Set to False for webcam
-VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test.mp4"  # 🔁 Replace with your video path
+VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"  # 🔁 Replace with your video path
 #cap = cv2.VideoCapture(0)
 
 # Shared variables
@@ -26,7 +26,8 @@ def capture_loop():
 
     if not cap.isOpened():
         print("[ERROR] Could not open video source.")
-        return
+        os._exit(0)
+        #return
 
     while True:
         ret, frame = cap.read()
@@ -38,7 +39,8 @@ def capture_loop():
                 continue
             else:
                 print("[ERROR] Failed to read frame from camera")
-                continue
+                os._exit(0)
+                #continue
 
 
         #current_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
