@@ -15,7 +15,7 @@ from pymavlink import mavutil
 app = Flask(__name__)
 
 # ===================== CONFIG =====================
-print(cv2.__version__)
+#print(cv2.__version__)
 USE_VIDEO = True
 #VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"  # or set to 0 for webcam
 VIDEO_PATH = 0
@@ -37,6 +37,7 @@ tracker = None
 bbox = None
 lock = threading.Lock()
 current_frame = None
+
 
 # For throttling console prints
 last_guidance_print = 0.0
@@ -75,19 +76,19 @@ def format_guidance(yaw_deg, pitch_deg):
     """
     # Yaw (left/right)
     if abs(yaw_deg) < 1.0:
-        yaw_cmd = "YAW HOLD (centered)"
+        yaw_cmd = "YAW 0 deg"
     elif yaw_deg > 0:
-        yaw_cmd = f"YAW RIGHT {abs(yaw_deg):.1f}°"
+        yaw_cmd = f"YAW RIGHT {abs(yaw_deg):.1f} deg"
     else:
-        yaw_cmd = f"YAW LEFT {abs(yaw_deg):.1f}°"
+        yaw_cmd = f"YAW LEFT {abs(yaw_deg):.1f} deg"
 
     # Pitch (up/down)
     if abs(pitch_deg) < 1.0:
-        pitch_cmd = "PITCH HOLD (centered)"
+        pitch_cmd = "PITCH 0 deg"
     elif pitch_deg > 0:
-        pitch_cmd = f"PITCH DOWN {abs(pitch_deg):.1f}°"
+        pitch_cmd = f"PITCH DOWN {abs(pitch_deg):.1f} deg"
     else:
-        pitch_cmd = f"PITCH UP {abs(pitch_deg):.1f}°"
+        pitch_cmd = f"PITCH UP {abs(pitch_deg):.1f} deg"
 
     return yaw_cmd, pitch_cmd
 
@@ -114,6 +115,14 @@ def capture_loop():
 
         fh, fw = frame.shape[:2]
 
+        # === Always draw center crosshair (for reference)
+        center = (fw // 2, fh // 2)
+        cv2.drawMarker(
+            frame, center, (255, 255, 255),
+            markerType=cv2.MARKER_CROSS, markerSize=14,
+            thickness=1, line_type=cv2.LINE_AA
+        )
+
         # Update tracker
         if tracker is not None and bbox is not None:
             try:
@@ -123,13 +132,62 @@ def capture_loop():
                     bbox = (x, y, w, h)
                     cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-                    # ---- GUIDANCE PRINTING ----
+                    # ---- GUIDANCE COMPUTATION ----
+                    yaw_deg, pitch_deg = bbox_to_angles(bbox, fw, fh)
+                    yaw_cmd, pitch_cmd = format_guidance(yaw_deg, pitch_deg)
+
+                    # ---- GUIDANCE PRINTING (terminal) ----
                     now = time.time()
                     if now - last_guidance_print > GUIDANCE_PRINT_INTERVAL:
-                        yaw_deg, pitch_deg = bbox_to_angles(bbox, fw, fh)
-                        yaw_cmd, pitch_cmd = format_guidance(yaw_deg, pitch_deg)
                         print(f"[GUIDANCE] {yaw_cmd}, {pitch_cmd}")
                         last_guidance_print = now
+
+                    # ---- GUIDANCE OVERLAY ON FRAME
+                    # line from center to bbox center
+                    cx, cy = bbox_center(bbox)
+                    target_center = (int(cx), int(cy))
+                    cv2.line(
+                        frame, center, target_center,
+                        (255, 0, 0), 2, cv2.LINE_AA
+                    )
+                    cv2.circle(
+                        frame, target_center, 5,
+                        (0, 255, 255), -1, cv2.LINE_AA
+                    )
+
+                    # text with raw angles
+                    cv2.putText(
+                        frame,
+                        f"Yaw: {yaw_deg:.1f} deg  Pitch: {pitch_deg:.1f} deg",
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 255, 255),
+                        2,
+                        cv2.LINE_AA
+                    )
+
+                    # text with discrete commands
+                    cv2.putText(
+                        frame,
+                        yaw_cmd,
+                        (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 200, 0),
+                        2,
+                        cv2.LINE_AA
+                    )
+                    cv2.putText(
+                        frame,
+                        pitch_cmd,
+                        (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 200, 0),
+                        2,
+                        cv2.LINE_AA
+                    )
                 else:
                     print("[INFO] Tracking lost")
                     # Optionally reset tracker & bbox
@@ -214,4 +272,5 @@ def set_bbox():
 # ---------------- MAIN ----------------
 if __name__ == '__main__':
     threading.Thread(target=capture_loop, daemon=True).start()
+    #threading.Thread(target=capture_loop_kalman, daemon=True).start()
     app.run(host='0.0.0.0', port=5000, debug=False)
