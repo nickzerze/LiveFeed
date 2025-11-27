@@ -1,0 +1,4 @@
+pip uninstall opencv-python
+pip install opencv-contrib-python
+
+install numpy version < 2.x
