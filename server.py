@@ -26,6 +26,11 @@ from ultralytics import YOLO
 #     subprocess.check_call([sys.executable, "-m", "pip", "install", "flask", "opencv-python", "numpy", "torch", "torchvision", "torchaudio", "ultralytics", "pillow"])
 
 
+# ===================== OPENCV PERFORMANCE SETTINGS =====================
+cv2.setNumThreads(1)        # prevent multi-thread jitter on older CPUs
+cv2.setUseOptimized(True)   # enables SIMD & CPU optimizations
+# ======================================================================
+
 # Quiet Flask access logs
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
@@ -102,6 +107,9 @@ lock = threading.Lock()
 current_frame = None          # last frame to send to Android
 bbox = None                   # current smoothed bbox (x, y, w, h)
 roi_bbox = None               # ROI selected from Android (x, y, w, h)
+selected_class_id = None   # YOLO class id of the chosen target
+tracking_active = False    # True after we lock onto a detection
+IOU_THRESH = 0.1           # minimum IoU to accept a detection as the same object
 
 
 kf = KalmanFilter2D()
@@ -174,17 +182,36 @@ def point_in_bbox(cx, cy, box):
     x, y, w, h = box
     return (x <= cx <= x + w) and (y <= cy <= y + h)
 
+def iou(boxA, boxB):
+    """Intersection over Union between two boxes (x, y, w, h)."""
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[0] + boxA[2], boxB[0] + boxB[2])
+    yB = min(boxA[1] + boxA[3], boxB[1] + boxB[3])
+
+    interW = max(0, xB - xA)
+    interH = max(0, yB - yA)
+    interArea = interW * interH
+
+    if interArea == 0:
+        return 0.0
+
+    boxAArea = boxA[2] * boxA[3]
+    boxBArea = boxB[2] * boxB[3]
+    return interArea / float(boxAArea + boxBArea - interArea)
+
 
 # ===================== VIDEO + YOLO + KALMAN LOOP =====================
 
 def capture_loop_yolo_kalman():
-    global current_frame, bbox, last_guidance_print, kf_initialized, roi_bbox
+    global current_frame, bbox, last_guidance_print
+    global kf_initialized, roi_bbox, selected_class_id, tracking_active
 
     cap = cv2.VideoCapture(VIDEO_PATH if USE_VIDEO else 0)
     fps = cap.get(cv2.CAP_PROP_FPS)
     delay = int(1000 / fps) if fps and fps > 0 else 33
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     if not cap.isOpened():
         print("[ERROR] Could not open video source.")
@@ -217,49 +244,79 @@ def capture_loop_yolo_kalman():
         measurement_cx = None
         measurement_cy = None
 
-        if roi_bbox is not None:
-            # Run YOLO only if user has selected an ROI
-            results = yolo_model(frame, imgsz=640, conf=0.4, verbose=False)
+        # Always run YOLO if we have ROI or active tracking
+        if roi_bbox is not None or tracking_active:
+            results = yolo_model(frame, imgsz=416, conf=0.35, verbose=False)
             boxes = results[0].boxes
 
             best_candidate = None
-            best_area = 0.0
+            best_score = 0.0
 
             if boxes is not None and len(boxes) > 0:
-                xyxy = boxes.xyxy.cpu().numpy()  # [N, 4]
+                xyxy = boxes.xyxy.cpu().numpy()        # [N, 4]
+                clses = boxes.cls.cpu().numpy().astype(int)  # [N]
 
-                for box in xyxy:
-                    x1, y1, x2, y2 = box
-                    w_box = x2 - x1
-                    h_box = y2 - y1
-                    cx = x1 + w_box / 2.0
-                    cy = y1 + h_box / 2.0
+                # ---------- INITIALIZATION: use ROI ----------
+                if not tracking_active and roi_bbox is not None:
+                    for i, box in enumerate(xyxy):
+                        x1, y1, x2, y2 = box
+                        w_box = x2 - x1
+                        h_box = y2 - y1
+                        cx = x1 + w_box / 2.0
+                        cy = y1 + h_box / 2.0
 
-                    if point_in_bbox(cx, cy, roi_bbox):
-                        area = w_box * h_box
-                        # choose largest detection that lies inside ROI
-                        if area > best_area:
-                            best_area = area
-                            best_candidate = (int(x1), int(y1),
-                                              int(w_box), int(h_box),
-                                              float(cx), float(cy))
+                        if point_in_bbox(cx, cy, roi_bbox):
+                            area = w_box * h_box
+                            if area > best_score:
+                                best_score = area
+                                best_candidate = (int(x1), int(y1),
+                                                  int(w_box), int(h_box),
+                                                  float(cx), float(cy),
+                                                  clses[i])
+                    if best_candidate is not None:
+                        x_meas, y_meas, w_meas, h_meas, cx_meas, cy_meas, cls_id = best_candidate
+                        measurement_box = (x_meas, y_meas, w_meas, h_meas)
+                        measurement_cx = cx_meas
+                        measurement_cy = cy_meas
+                        selected_class_id = int(cls_id)
+                        tracking_active = True
+                        print(f"[INFO] Locked on class {selected_class_id}")
 
-            if best_candidate is not None:
-                x_meas, y_meas, w_meas, h_meas, cx_meas, cy_meas = best_candidate
-                measurement_box = (x_meas, y_meas, w_meas, h_meas)
-                measurement_cx = cx_meas
-                measurement_cy = cy_meas
+                # ---------- TRACKING: use class + IoU ----------
+                elif tracking_active and bbox is not None and selected_class_id is not None:
+                    prev_box = bbox
+                    for i, box in enumerate(xyxy):
+                        if clses[i] != selected_class_id:
+                            continue
+                        x1, y1, x2, y2 = box
+                        w_box = x2 - x1
+                        h_box = y2 - y1
+                        cand_box = (int(x1), int(y1), int(w_box), int(h_box))
+                        score = iou(prev_box, cand_box)
+                        if score > best_score:
+                            best_score = score
+                            cx = x1 + w_box / 2.0
+                            cy = y1 + h_box / 2.0
+                            best_candidate = (cand_box[0], cand_box[1], cand_box[2], cand_box[3], float(cx), float(cy))
+
+                    if best_candidate is not None and best_score > IOU_THRESH:
+                        x_meas, y_meas, w_meas, h_meas, cx_meas, cy_meas = best_candidate
+                        measurement_box = (x_meas, y_meas, w_meas, h_meas)
+                        measurement_cx = cx_meas
+                        measurement_cy = cy_meas
+                    else:
+                        # No good detection; we'll rely on prediction
+                        pass
 
         # -----------------------------------------------------
         #                KALMAN FILTER LOGIC
         # -----------------------------------------------------
         if measurement_box is not None:
-            # We have a YOLO detection inside the ROI
+            # We have a YOLO measurement
             if not kf_initialized:
                 kf.init_state(measurement_cx, measurement_cy)
                 kf_initialized = True
 
-            # Update with measurement, then predict next state
             kf.update(measurement_cx, measurement_cy)
             pred_x, pred_y = kf.predict()
 
@@ -268,19 +325,18 @@ def capture_loop_yolo_kalman():
             py = int(pred_y - h_meas / 2.0)
             bbox = (px, py, int(w_meas), int(h_meas))
 
-            # Draw raw YOLO box (optional, in red)
+            # Draw raw YOLO box (red)
             x_raw, y_raw, w_raw, h_raw = measurement_box
             cv2.rectangle(frame, (x_raw, y_raw), (x_raw + w_raw, y_raw + h_raw),
                           (0, 0, 255), 1)
 
-            # Draw smoothed (Kalman) box in green
+            # Draw smoothed box (green)
             cv2.rectangle(frame, (px, py), (px + w_meas, py + h_meas),
                           (0, 255, 0), 2)
 
         else:
-            # No YOLO detection this frame
+            # No measurement this frame
             if kf_initialized and bbox is not None:
-                # Predict only
                 pred_x, pred_y = kf.predict()
                 bw, bh = bbox[2], bbox[3]
                 px = int(pred_x - bw / 2.0)
@@ -296,17 +352,15 @@ def capture_loop_yolo_kalman():
         # -----------------------------------------------------
         #                GUIDANCE COMPUTATION
         # -----------------------------------------------------
-        if bbox is not None:
+        if bbox is not None and tracking_active:
             cx, cy = bbox_center(bbox)
             yaw_deg, pitch_deg = bbox_to_angles(bbox, fw, fh)
             yaw_cmd, pitch_cmd = format_guidance(yaw_deg, pitch_deg)
 
-            # --- Draw line from center to bbox center ---
             target_center = (int(cx), int(cy))
             cv2.line(frame, center, target_center, (255, 0, 0), 2, cv2.LINE_AA)
             cv2.circle(frame, target_center, 5, (0, 255, 255), -1, cv2.LINE_AA)
 
-            # --- Draw angle numbers ---
             cv2.putText(
                 frame,
                 f"Yaw: {yaw_deg:+.1f} deg   Pitch: {pitch_deg:+.1f} deg",
@@ -318,7 +372,6 @@ def capture_loop_yolo_kalman():
                 cv2.LINE_AA
             )
 
-            # --- Draw command strings ---
             cv2.putText(
                 frame, yaw_cmd, (10, 60),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 0), 2, cv2.LINE_AA
@@ -328,15 +381,11 @@ def capture_loop_yolo_kalman():
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 0), 2, cv2.LINE_AA
             )
 
-            # --- Throttled console printing ---
             now = time.time()
             if now - last_guidance_print > GUIDANCE_PRINT_INTERVAL:
                 print(f"[GUIDANCE] {yaw_cmd}, {pitch_cmd}")
                 last_guidance_print = now
 
-        # -----------------------------------------------------
-        #       UPDATE SHARED FRAME + DISPLAY
-        # -----------------------------------------------------
         with lock:
             current_frame = frame.copy()
 
@@ -349,6 +398,7 @@ def capture_loop_yolo_kalman():
     cap.release()
     cv2.destroyAllWindows()
     os._exit(0)
+
 
 
 # ===================== FLASK ROUTES =====================
@@ -365,11 +415,7 @@ def get_frame():
 
 @app.route('/bbox', methods=['POST'])
 def set_bbox():
-    """
-    Receive ROI from Android; used to select which YOLO detection to follow.
-    Android sends normalized coordinates [0..1] (x, y, w, h).
-    """
-    global bbox, roi_bbox, current_frame, last_guidance_print, kf_initialized
+    global bbox, roi_bbox, current_frame, last_guidance_print, kf_initialized, selected_class_id, tracking_active
 
     data = request.get_json()
     norm_x = float(data['x'])
@@ -394,16 +440,16 @@ def set_bbox():
     h = max(1, min(h, fh - y))
 
     roi_bbox = (x, y, w, h)
-    bbox = None  # will be set once YOLO finds a detection inside ROI
+    bbox = None
+    selected_class_id = None
+    tracking_active = False
 
-    # reset Kalman
-    kf.init_state(x + w / 2.0, y + h / 2.0)
+    # reset Kalman (will be initialized when we get first detection)
     kf_initialized = False
     last_guidance_print = 0.0
 
     print(f"[INFO] ROI from Android: {roi_bbox}")
     return "ROI received; YOLO+Kalman tracking will start", 200
-
 
 # ===================== MAIN =====================
 

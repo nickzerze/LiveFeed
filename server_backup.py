@@ -17,7 +17,8 @@ app = Flask(__name__)
 # ===================== CONFIG =====================
 print(cv2.__version__)
 USE_VIDEO = True
-VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"  # or set to 0 for webcam
+# VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"  # or set to 0 for webcam
+VIDEO_PATH = 0
 
 # MAVProxy must output to this port (e.g. in MAVProxy: `output add 127.0.0.1:14552`)
 UDP_IN = 'udpin:0.0.0.0:14550'   # keep QGC on 14550
@@ -241,7 +242,7 @@ def guidance_loop():
     global guidance_running
     if guidance_running:
         return
-    guidance_running = True0
+    guidance_running = True
 
     try:
         set_mode("GUIDED")

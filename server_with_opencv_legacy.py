@@ -46,6 +46,11 @@ class KalmanFilter2D:
         self.x = self.x + K @ y
         self.P = (np.eye(4) - K @ self.H) @ self.P
 
+# ===================== OPENCV PERFORMANCE SETTINGS  =====================
+# ===================== ONLY IF OPENCV-PYTHON IS INSTALLED  ==============
+cv2.setNumThreads(1)        # prevent multi-thread jitter on older CPUs
+cv2.setUseOptimized(True)   # enables SIMD & CPU optimizations
+# ======================================================================
 
 # Quiet Flask access logs
 log = logging.getLogger('werkzeug')
@@ -143,8 +148,8 @@ def capture_loop():
     cap = cv2.VideoCapture(VIDEO_PATH if USE_VIDEO else 0)
     fps = cap.get(cv2.CAP_PROP_FPS)
     delay = int(1000 / fps) if fps and fps > 0 else 33
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     if not cap.isOpened():
         print("[ERROR] Could not open video source.")
@@ -262,8 +267,8 @@ def capture_loop_kalman():
     cap = cv2.VideoCapture(VIDEO_PATH if USE_VIDEO else 0)
     fps = cap.get(cv2.CAP_PROP_FPS)
     delay = int(1000 / fps) if fps and fps > 0 else 33
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     if not cap.isOpened():
         print("[ERROR] Could not open video source.")
@@ -440,12 +445,12 @@ def set_bbox():
     bbox = (x, y, w, h)
 
     try:
-        # tracker = cv2.TrackerKCF_create() #Use KCF tracker
-        # tracker = cv2.TrackerCSRT_create()
+        # tracker = cv2.TrackerKCF_create() # BEST 2
+        tracker = cv2.TrackerCSRT_create() # BEST 1
         # tracker = cv2.legacy.TrackerMOSSE_create()
-        # tracker = cv2.legacy.TrackerMIL_create()
-        # tracker = cv2.legacy.TrackerTLD_create()
-        tracker = cv2.legacy.TrackerMedianFlow_create()
+        # tracker = cv2.legacy.TrackerMIL_create() # BEST 3
+        # tracker = cv2.legacy.TrackerTLD_create() # BEST 4
+        # tracker = cv2.legacy.TrackerMedianFlow_create() # BEST 5
         tracker.init(current_frame, bbox)
         last_guidance_print = 0.0  # reset so we print immediately
         print(f"[INFO] Tracker initialized at {bbox}")
@@ -466,6 +471,6 @@ def set_bbox():
 
 # ---------------- MAIN ----------------
 if __name__ == '__main__':
-    #threading.Thread(target=capture_loop, daemon=True).start()
-    threading.Thread(target=capture_loop_kalman, daemon=True).start()
+    threading.Thread(target=capture_loop, daemon=True).start()
+    # threading.Thread(target=capture_loop_kalman, daemon=True).start()
     app.run(host='0.0.0.0', port=5000, debug=False)
