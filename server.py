@@ -3,34 +3,71 @@ from flask import Flask, Response, request
 import threading
 import os
 import time
-import math
 import logging
 import numpy as np
+import torch
+from ultralytics import YOLO
 
+
+# try:
+#     import cv2
+#     from flask import Flask, Response, request
+#     import threading
+#     import os
+#     import time
+#     import logging
+#     import numpy as np
+#     import torch
+#     from ultralytics import YOLO
+#
+# except ImportError:
+#     print("[INFO] Missing dependencies, running auto-installer...")
+#     import subprocess, sys
+#     subprocess.check_call([sys.executable, "-m", "pip", "install", "flask", "opencv-python", "numpy", "torch", "torchvision", "torchaudio", "ultralytics", "pillow"])
+
+
+# Quiet Flask access logs
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
+app = Flask(__name__)
+
+# ===================== KALMAN FILTER =====================
 
 class KalmanFilter2D:
     def __init__(self):
         # state: [x, y, vx, vy]
         self.x = np.zeros((4, 1))
 
-        # state transition matrix
-        dt = 1
-        self.F = np.array([[1, 0, dt, 0],
-                           [1, 0, 0, dt],
-                           [0, 0, 1, 0],
-                           [0, 0, 0, 1]], dtype=float)
+        # state transition matrix (constant velocity model)
+        dt = 1.0
+        self.F = np.array([
+            [1, 0, dt, 0],
+            [0, 1, 0, dt],
+            [0, 0, 1,  0],
+            [0, 0, 0,  1]
+        ], dtype=float)
 
         # process noise
         self.Q = np.eye(4) * 0.01
 
-        # measurement matrix
-        self.H = np.array([[1, 0, 0, 0],
-                           [0, 1, 0, 0]], dtype=float)
+        # measurement matrix: we only measure x, y
+        self.H = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0]
+        ], dtype=float)
 
         # measurement noise
-        self.R = np.eye(2) * 5
+        self.R = np.eye(2) * 5.0
 
         # covariance
+        self.P = np.eye(4)
+
+    def init_state(self, measured_x, measured_y):
+        """Initialize state from first measurement."""
+        self.x[:] = 0.0
+        self.x[0, 0] = measured_x
+        self.x[1, 0] = measured_y
         self.P = np.eye(4)
 
     def predict(self):
@@ -47,44 +84,38 @@ class KalmanFilter2D:
         self.P = (np.eye(4) - K @ self.H) @ self.P
 
 
-# Quiet Flask access logs
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
-
-from pymavlink import mavutil
-
-app = Flask(__name__)
-
 # ===================== CONFIG =====================
-# print(cv2.__version__)
 USE_VIDEO = True
+VIDEO_PATH = 0  # 0 = default webcam, or path to video file
 # VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"  # or set to 0 for webcam
-VIDEO_PATH = 0
 
-# MAVProxy must output to this port (e.g. in MAVProxy: `output add 127.0.0.1:14552`)
-# UDP_IN = 'udpin:0.0.0.0:14550'   # keep QGC on 14550
+# Camera FOV for bbox->bearing (your measured values)
+CAMERA_HFOV_DEG = 67.24  # HFOV = 2 × arctan(W / (2 × D))
+CAMERA_VFOV_DEG = 41.12  # VFOV = 2 × arctan(H / (2 × D))
 
-# Camera FOV for bbox->bearing
-#
-CAMERA_HFOV_DEG = 67.24  # HFOV = 2 × arctan( W / (2 × D) )  D=1m camera distance from the wall W=1.33m
-CAMERA_VFOV_DEG = 41.12  # VFOV = 2 × arctan( H / (2 × D) ) D=1m H=0,75M
-
-# How often to print guidance (seconds)
-GUIDANCE_PRINT_INTERVAL = 1
+# How often to print guidance in terminal (seconds)
+GUIDANCE_PRINT_INTERVAL = 1.0
 # ===================================================
 
 # Shared state
-tracker = None
-bbox = None
 lock = threading.Lock()
-current_frame = None
+current_frame = None          # last frame to send to Android
+bbox = None                   # current smoothed bbox (x, y, w, h)
+roi_bbox = None               # ROI selected from Android (x, y, w, h)
+
+
 kf = KalmanFilter2D()
+kf_initialized = False
 
 # For throttling console prints
 last_guidance_print = 0.0
 
+# Load YOLOv8 nano model (COCO pretrained)
+# This will auto-download yolov8n.pt the first time.
+yolo_model = YOLO("yolov8n.pt")
 
-# ------------- GUIDANCE FROM BBOX -------------
+
+# ===================== HELPER FUNCTIONS =====================
 
 def bbox_center(b):
     """Return (cx, cy) center of bbox in pixels."""
@@ -117,6 +148,7 @@ def bbox_to_angles(b, frame_w, frame_h):
 def format_guidance(yaw_deg, pitch_deg):
     """
     Turn yaw/pitch angles into human-readable text commands.
+    Uses 'deg' instead of the degree symbol to avoid '??' on Android.
     """
     # Yaw (left/right)
     if abs(yaw_deg) < 1.0:
@@ -137,128 +169,17 @@ def format_guidance(yaw_deg, pitch_deg):
     return yaw_cmd, pitch_cmd
 
 
-# ---------------- VIDEO THREAD ----------------
-def capture_loop():
-    global current_frame, tracker, bbox, last_guidance_print
-    cap = cv2.VideoCapture(VIDEO_PATH if USE_VIDEO else 0)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    delay = int(1000 / fps) if fps and fps > 0 else 33
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
-    if not cap.isOpened():
-        print("[ERROR] Could not open video source.")
-        os._exit(0)
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            if USE_VIDEO:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0);
-                continue
-            else:
-                print("[ERROR] Failed to read frame from camera");
-                os._exit(0)
-
-        fh, fw = frame.shape[:2]
-
-        # === Always draw center crosshair (for reference)
-        center = (fw // 2, fh // 2)
-        cv2.drawMarker(
-            frame, center, (255, 255, 255),
-            markerType=cv2.MARKER_CROSS, markerSize=14,
-            thickness=1, line_type=cv2.LINE_AA
-        )
-
-        # Update tracker
-        if tracker is not None and bbox is not None:
-            try:
-                ok, new_box = tracker.update(frame)
-                if ok:
-                    x, y, w, h = [int(v) for v in new_box]
-                    bbox = (x, y, w, h)
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-                    # ---- GUIDANCE COMPUTATION ----
-                    yaw_deg, pitch_deg = bbox_to_angles(bbox, fw, fh)
-                    yaw_cmd, pitch_cmd = format_guidance(yaw_deg, pitch_deg)
-
-                    # ---- GUIDANCE PRINTING (terminal) ----
-                    now = time.time()
-                    if now - last_guidance_print > GUIDANCE_PRINT_INTERVAL:
-                        print(f"[GUIDANCE] {yaw_cmd}, {pitch_cmd}")
-                        last_guidance_print = now
-
-                    # ---- GUIDANCE OVERLAY ON FRAME
-                    # line from center to bbox center
-                    cx, cy = bbox_center(bbox)
-                    target_center = (int(cx), int(cy))
-                    cv2.line(
-                        frame, center, target_center,
-                        (255, 0, 0), 2, cv2.LINE_AA
-                    )
-                    cv2.circle(
-                        frame, target_center, 5,
-                        (0, 255, 255), -1, cv2.LINE_AA
-                    )
-
-                    # text with raw angles
-                    cv2.putText(
-                        frame,
-                        f"Yaw: {yaw_deg:.1f} deg  Pitch: {pitch_deg:.1f} deg",
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 255, 255),
-                        2,
-                        cv2.LINE_AA
-                    )
-
-                    # text with discrete commands
-                    cv2.putText(
-                        frame,
-                        yaw_cmd,
-                        (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 200, 0),
-                        2,
-                        cv2.LINE_AA
-                    )
-                    cv2.putText(
-                        frame,
-                        pitch_cmd,
-                        (10, 90),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 200, 0),
-                        2,
-                        cv2.LINE_AA
-                    )
-                else:
-                    print("[INFO] Tracking lost")
-                    # Optionally reset tracker & bbox
-                    # tracker = None
-                    # bbox = None
-            except Exception as e:
-                print(f"[ERROR] Tracker update failed: {e}")
-
-        with lock:
-            current_frame = frame.copy()
-
-        cv2.imshow("Live Feed", frame)
-        key = cv2.waitKey(delay) & 0xFF
-        if key == ord('q') or cv2.getWindowProperty("Live Feed", cv2.WND_PROP_VISIBLE) < 1:
-            print("[INFO] Exiting capture loop…");
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-    os._exit(0)
+def point_in_bbox(cx, cy, box):
+    """Check if a point (cx, cy) lies inside bbox (x, y, w, h)."""
+    x, y, w, h = box
+    return (x <= cx <= x + w) and (y <= cy <= y + h)
 
 
-def capture_loop_kalman():
-    global current_frame, tracker, bbox, last_guidance_print, kf
+# ===================== VIDEO + YOLO + KALMAN LOOP =====================
+
+def capture_loop_yolo_kalman():
+    global current_frame, bbox, last_guidance_print, kf_initialized, roi_bbox
+
     cap = cv2.VideoCapture(VIDEO_PATH if USE_VIDEO else 0)
     fps = cap.get(cv2.CAP_PROP_FPS)
     delay = int(1000 / fps) if fps and fps > 0 else 33
@@ -290,57 +211,87 @@ def capture_loop_kalman():
         )
 
         # -----------------------------------------------------
-        #                TRACKING + KALMAN FILTER
+        #                YOLOv8n DETECTION
         # -----------------------------------------------------
-        if tracker is not None and bbox is not None:
-            try:
-                ok, new_box = tracker.update(frame)
+        measurement_box = None  # (x, y, w, h) from YOLO
+        measurement_cx = None
+        measurement_cy = None
 
-                if ok:
-                    # --- RAW TRACKER OUTPUT ---
-                    x, y, w_box, h_box = [int(v) for v in new_box]
-                    cx = x + w_box / 2
-                    cy = y + h_box / 2
+        if roi_bbox is not None:
+            # Run YOLO only if user has selected an ROI
+            results = yolo_model(frame, imgsz=640, conf=0.4, verbose=False)
+            boxes = results[0].boxes
 
-                    # --- UPDATE KALMAN FILTER WITH MEASUREMENT ---
-                    kf.update(cx, cy)
+            best_candidate = None
+            best_area = 0.0
 
-                    # --- PREDICT NEXT POSITION ---
-                    pred_x, pred_y = kf.predict()
+            if boxes is not None and len(boxes) > 0:
+                xyxy = boxes.xyxy.cpu().numpy()  # [N, 4]
 
-                    # convert predicted center to bbox coords
-                    px = int(pred_x - w_box / 2)
-                    py = int(pred_y - h_box / 2)
+                for box in xyxy:
+                    x1, y1, x2, y2 = box
+                    w_box = x2 - x1
+                    h_box = y2 - y1
+                    cx = x1 + w_box / 2.0
+                    cy = y1 + h_box / 2.0
 
-                    bbox = (px, py, w_box, h_box)
+                    if point_in_bbox(cx, cy, roi_bbox):
+                        area = w_box * h_box
+                        # choose largest detection that lies inside ROI
+                        if area > best_area:
+                            best_area = area
+                            best_candidate = (int(x1), int(y1),
+                                              int(w_box), int(h_box),
+                                              float(cx), float(cy))
 
-                    # draw smoothed bbox
-                    cv2.rectangle(frame, (px, py), (px + w_box, py + h_box),
-                                  (0, 255, 0), 2)
+            if best_candidate is not None:
+                x_meas, y_meas, w_meas, h_meas, cx_meas, cy_meas = best_candidate
+                measurement_box = (x_meas, y_meas, w_meas, h_meas)
+                measurement_cx = cx_meas
+                measurement_cy = cy_meas
 
-                else:
-                    # ------------------------------------------------
-                    # TRACKER LOST → rely ONLY on Kalman prediction
-                    # ------------------------------------------------
-                    pred_x, pred_y = kf.predict()
+        # -----------------------------------------------------
+        #                KALMAN FILTER LOGIC
+        # -----------------------------------------------------
+        if measurement_box is not None:
+            # We have a YOLO detection inside the ROI
+            if not kf_initialized:
+                kf.init_state(measurement_cx, measurement_cy)
+                kf_initialized = True
 
-                    # use old bbox size (if available)
-                    bw = bbox[2]
-                    bh = bbox[3]
+            # Update with measurement, then predict next state
+            kf.update(measurement_cx, measurement_cy)
+            pred_x, pred_y = kf.predict()
 
-                    px = int(pred_x - bw / 2)
-                    py = int(pred_y - bh / 2)
+            w_meas, h_meas = measurement_box[2], measurement_box[3]
+            px = int(pred_x - w_meas / 2.0)
+            py = int(pred_y - h_meas / 2.0)
+            bbox = (px, py, int(w_meas), int(h_meas))
 
-                    bbox = (px, py, bw, bh)
+            # Draw raw YOLO box (optional, in red)
+            x_raw, y_raw, w_raw, h_raw = measurement_box
+            cv2.rectangle(frame, (x_raw, y_raw), (x_raw + w_raw, y_raw + h_raw),
+                          (0, 0, 255), 1)
 
-                    cv2.rectangle(frame, (px, py), (px + bw, py + bh),
-                                  (0, 128, 128), 2)
-                    cv2.putText(frame, "PREDICTING...",
-                                (10, fh - 20), cv2.FONT_HERSHEY_SIMPLEX,
-                                0.7, (0, 200, 200), 2)
+            # Draw smoothed (Kalman) box in green
+            cv2.rectangle(frame, (px, py), (px + w_meas, py + h_meas),
+                          (0, 255, 0), 2)
 
-            except Exception as e:
-                print(f"[ERROR] Tracker update failed: {e}")
+        else:
+            # No YOLO detection this frame
+            if kf_initialized and bbox is not None:
+                # Predict only
+                pred_x, pred_y = kf.predict()
+                bw, bh = bbox[2], bbox[3]
+                px = int(pred_x - bw / 2.0)
+                py = int(pred_y - bh / 2.0)
+                bbox = (px, py, bw, bh)
+
+                cv2.rectangle(frame, (px, py), (px + bw, py + bh),
+                              (0, 128, 128), 2)
+                cv2.putText(frame, "PREDICTING...",
+                            (10, fh - 20), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7, (0, 200, 200), 2)
 
         # -----------------------------------------------------
         #                GUIDANCE COMPUTATION
@@ -367,7 +318,7 @@ def capture_loop_kalman():
                 cv2.LINE_AA
             )
 
-            # --- Draw command (signed, Android-safe) ---
+            # --- Draw command strings ---
             cv2.putText(
                 frame, yaw_cmd, (10, 60),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 0), 2, cv2.LINE_AA
@@ -400,7 +351,8 @@ def capture_loop_kalman():
     os._exit(0)
 
 
-# ---------------- FLASK ROUTES ----------------
+# ===================== FLASK ROUTES =====================
+
 @app.route('/frame')
 def get_frame():
     global current_frame
@@ -413,8 +365,11 @@ def get_frame():
 
 @app.route('/bbox', methods=['POST'])
 def set_bbox():
-    """Init tracker from Android bbox."""
-    global bbox, tracker, current_frame, last_guidance_print
+    """
+    Receive ROI from Android; used to select which YOLO detection to follow.
+    Android sends normalized coordinates [0..1] (x, y, w, h).
+    """
+    global bbox, roi_bbox, current_frame, last_guidance_print, kf_initialized
 
     data = request.get_json()
     norm_x = float(data['x'])
@@ -437,35 +392,21 @@ def set_bbox():
     y = max(0, min(y, fh - 1))
     w = max(1, min(w, fw - x))
     h = max(1, min(h, fh - y))
-    bbox = (x, y, w, h)
 
-    try:
-        # tracker = cv2.TrackerKCF_create() #Use KCF tracker
-        # tracker = cv2.TrackerCSRT_create()
-        # tracker = cv2.legacy.TrackerMOSSE_create()
-        # tracker = cv2.legacy.TrackerMIL_create()
-        # tracker = cv2.legacy.TrackerTLD_create()
-        tracker = cv2.legacy.TrackerMedianFlow_create()
-        tracker.init(current_frame, bbox)
-        last_guidance_print = 0.0  # reset so we print immediately
-        print(f"[INFO] Tracker initialized at {bbox}")
+    roi_bbox = (x, y, w, h)
+    bbox = None  # will be set once YOLO finds a detection inside ROI
 
-        # Optional: print initial guidance right away
-        yaw_deg, pitch_deg = bbox_to_angles(bbox, fw, fh)
-        yaw_cmd, pitch_cmd = format_guidance(yaw_deg, pitch_deg)
-        print(f"[GUIDANCE-INITIAL] {yaw_cmd}, {pitch_cmd}")
+    # reset Kalman
+    kf.init_state(x + w / 2.0, y + h / 2.0)
+    kf_initialized = False
+    last_guidance_print = 0.0
 
-        # threading.Thread(target=auto_launch_once, daemon=True).start()
-        return "Bounding box received; tracking & guidance started", 200
-    except Exception as e:
-        print(f"[ERROR] Tracker init error: {e}")
-        tracker = None;
-        bbox = None
-        return "Tracker init error", 500
+    print(f"[INFO] ROI from Android: {roi_bbox}")
+    return "ROI received; YOLO+Kalman tracking will start", 200
 
 
-# ---------------- MAIN ----------------
+# ===================== MAIN =====================
+
 if __name__ == '__main__':
-    #threading.Thread(target=capture_loop, daemon=True).start()
-    threading.Thread(target=capture_loop_kalman, daemon=True).start()
+    threading.Thread(target=capture_loop_yolo_kalman, daemon=True).start()
     app.run(host='0.0.0.0', port=5000, debug=False)
