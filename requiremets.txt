@@ -1,5 +1,5 @@
 pip uninstall opencv-python
 pip install opencv-contrib-python
-pip unistall numpy
+pip uninstall numpy
 pip install numpy==1.26.4
 
