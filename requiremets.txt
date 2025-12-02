@@ -1,5 +1,16 @@
 pip uninstall opencv-python
-pip install opencv-contrib-python
+pip install opencv-python==4.9.0.80
 pip uninstall numpy
 pip install numpy==1.26.4
 
+Πολλές φορές χαλάει
+Γενικά μου έχει παίξει με:
+    - Desktop (both cv2 and YOLO):
+    pip install --force-reinstall opencv-contrib-python==4.9.0.80
+    pip uninstall numpy
+    pip install numpy==1.26.4
+
+    - Laptop (both cv2 and YOLO):
+    opencv-contrib-python==4.12.0.88
+    opencv-python-headless==4.7.0.72
+    numpy==1.26.4
