@@ -91,8 +91,8 @@ class KalmanFilter2D:
 
 # ===================== CONFIG =====================
 USE_VIDEO = True
-VIDEO_PATH = 0  # 0 = default webcam, or path to video file
-# VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"  # or set to 0 for webcam
+# VIDEO_PATH = 0  # 0 = default webcam, or path to video file
+VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"  # or set to 0 for webcam
 
 # Camera FOV for bbox->bearing (your measured values)
 CAMERA_HFOV_DEG = 67.24  # HFOV = 2 × arctan(W / (2 × D))
@@ -402,6 +402,9 @@ def capture_loop_yolo_kalman():
 
 
 # ===================== FLASK ROUTES =====================
+@app.route("/ping")
+def ping():
+    return "OK", 200
 
 @app.route('/frame')
 def get_frame():
