@@ -9,6 +9,44 @@ import numpy as np
 #from pymavlink import mavutil
 
 
+class KalmanFilter2D:
+    def __init__(self):
+        # state: [x, y, vx, vy]
+        self.x = np.zeros((4, 1))
+
+        # state transition matrix
+        dt = 1
+        self.F = np.array([[1, 0, dt, 0],
+                           [1, 0, 0, dt],
+                           [0, 0, 1, 0],
+                           [0, 0, 0, 1]], dtype=float)
+
+        # process noise
+        self.Q = np.eye(4) * 0.01
+
+        # measurement matrix
+        self.H = np.array([[1, 0, 0, 0],
+                           [0, 1, 0, 0]], dtype=float)
+
+        # measurement noise
+        self.R = np.eye(2) * 5
+
+        # covariance
+        self.P = np.eye(4)
+
+    def predict(self):
+        self.x = self.F @ self.x
+        self.P = self.F @ self.P @ self.F.T + self.Q
+        return self.x[0, 0], self.x[1, 0]
+
+    def update(self, measured_x, measured_y):
+        z = np.array([[measured_x], [measured_y]])
+        y = z - self.H @ self.x
+        S = self.H @ self.P @ self.H.T + self.R
+        K = self.P @ self.H.T @ np.linalg.inv(S)
+        self.x = self.x + K @ y
+        self.P = (np.eye(4) - K @ self.H) @ self.P
+
 # ===================== OPENCV PERFORMANCE SETTINGS  =====================
 # ===================== ONLY IF OPENCV-PYTHON IS INSTALLED  ==============
 cv2.setNumThreads(1)        # prevent multi-thread jitter on older CPUs
@@ -44,6 +82,7 @@ tracker = None
 bbox = None
 lock = threading.Lock()
 current_frame = None
+kf = KalmanFilter2D()
 
 # For throttling console prints
 last_guidance_print = 0.0
@@ -103,8 +142,8 @@ def format_guidance(yaw_deg, pitch_deg):
 
 
 # ---------------- VIDEO THREAD ----------------
-def capture_loop():
-    global current_frame, tracker, bbox, last_guidance_print
+def capture_loop_kalman():
+    global current_frame, tracker, bbox, last_guidance_print, kf
     cap = cv2.VideoCapture(VIDEO_PATH if USE_VIDEO else 0)
     fps = cap.get(cv2.CAP_PROP_FPS)
     delay = int(1000 / fps) if fps and fps > 0 else 33
@@ -127,7 +166,7 @@ def capture_loop():
 
         fh, fw = frame.shape[:2]
 
-        # === Always draw center crosshair (for reference)
+        # === Draw center crosshair ===
         center = (fw // 2, fh // 2)
         cv2.drawMarker(
             frame, center, (255, 255, 255),
@@ -135,79 +174,107 @@ def capture_loop():
             thickness=1, line_type=cv2.LINE_AA
         )
 
-        # Update tracker
+        # -----------------------------------------------------
+        #                TRACKING + KALMAN FILTER
+        # -----------------------------------------------------
         if tracker is not None and bbox is not None:
             try:
                 ok, new_box = tracker.update(frame)
+
                 if ok:
-                    x, y, w, h = [int(v) for v in new_box]
-                    bbox = (x, y, w, h)
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    # --- RAW TRACKER OUTPUT ---
+                    x, y, w_box, h_box = [int(v) for v in new_box]
+                    cx = x + w_box / 2
+                    cy = y + h_box / 2
 
-                    # ---- GUIDANCE COMPUTATION ----
-                    yaw_deg, pitch_deg = bbox_to_angles(bbox, fw, fh)
-                    yaw_cmd, pitch_cmd = format_guidance(yaw_deg, pitch_deg)
+                    # --- UPDATE KALMAN FILTER WITH MEASUREMENT ---
+                    kf.update(cx, cy)
 
-                    # ---- GUIDANCE PRINTING (terminal) ----
-                    now = time.time()
-                    if now - last_guidance_print > GUIDANCE_PRINT_INTERVAL:
-                        print(f"[GUIDANCE] {yaw_cmd}, {pitch_cmd}")
-                        last_guidance_print = now
+                    # --- PREDICT NEXT POSITION ---
+                    pred_x, pred_y = kf.predict()
 
-                    # ---- GUIDANCE OVERLAY ON FRAME
-                    # line from center to bbox center
-                    cx, cy = bbox_center(bbox)
-                    target_center = (int(cx), int(cy))
-                    cv2.line(
-                        frame, center, target_center,
-                        (255, 0, 0), 2, cv2.LINE_AA
-                    )
-                    cv2.circle(
-                        frame, target_center, 5,
-                        (0, 255, 255), -1, cv2.LINE_AA
-                    )
+                    # convert predicted center to bbox coords
+                    px = int(pred_x - w_box / 2)
+                    py = int(pred_y - h_box / 2)
 
-                    # text with raw angles
-                    cv2.putText(
-                        frame,
-                        f"Yaw: {yaw_deg:.1f} deg  Pitch: {pitch_deg:.1f} deg",
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 255, 255),
-                        2,
-                        cv2.LINE_AA
-                    )
+                    bbox = (px, py, w_box, h_box)
 
-                    # text with discrete commands
-                    cv2.putText(
-                        frame,
-                        yaw_cmd,
-                        (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 200, 0),
-                        2,
-                        cv2.LINE_AA
-                    )
-                    cv2.putText(
-                        frame,
-                        pitch_cmd,
-                        (10, 90),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 200, 0),
-                        2,
-                        cv2.LINE_AA
-                    )
+                    # draw smoothed bbox
+                    cv2.rectangle(frame, (px, py), (px + w_box, py + h_box),
+                                  (0, 255, 0), 2)
+
                 else:
-                    print("[INFO] Tracking lost")
-                    # Optionally reset tracker & bbox
-                    # tracker = None
-                    # bbox = None
+                    # ------------------------------------------------
+                    # TRACKER LOST → rely ONLY on Kalman prediction
+                    # ------------------------------------------------
+                    pred_x, pred_y = kf.predict()
+
+
+                    # use old bbox size (if available)
+                    bw = bbox[2]
+                    bh = bbox[3]
+
+                    px = int(pred_x - bw / 2)
+                    py = int(pred_y - bh / 2)
+
+                    bbox = (px, py, bw, bh)
+
+                    cv2.rectangle(frame, (px, py), (px + bw, py + bh),
+                                  (0, 128, 128), 2)
+                    cv2.putText(frame, "PREDICTING...",
+                                (10, fh - 20), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7, (0, 200, 200), 2)
+
             except Exception as e:
                 print(f"[ERROR] Tracker update failed: {e}")
+                #tracker = None
+                #bbox = None
+                #continue
 
+        # -----------------------------------------------------
+        #                GUIDANCE COMPUTATION
+        # -----------------------------------------------------
+        if bbox is not None:
+            cx, cy = bbox_center(bbox)
+            yaw_deg, pitch_deg = bbox_to_angles(bbox, fw, fh)
+            yaw_cmd, pitch_cmd = format_guidance(yaw_deg, pitch_deg)
+
+            # --- Draw line from center to bbox center ---
+            target_center = (int(cx), int(cy))
+            cv2.line(frame, center, target_center, (255, 0, 0), 2, cv2.LINE_AA)
+            cv2.circle(frame, target_center, 5, (0, 255, 255), -1, cv2.LINE_AA)
+
+            # --- Draw angle numbers ---
+            cv2.putText(
+                frame,
+                f"Yaw: {yaw_deg:+.1f} deg   Pitch: {pitch_deg:+.1f} deg",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 255),
+                2,
+                cv2.LINE_AA
+            )
+
+            # --- Draw command (signed, Android-safe) ---
+            cv2.putText(
+                frame, yaw_cmd, (10, 60),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 0), 2, cv2.LINE_AA
+            )
+            cv2.putText(
+                frame, pitch_cmd, (10, 90),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 0), 2, cv2.LINE_AA
+            )
+
+            # --- Throttled console printing ---
+            now = time.time()
+            if now - last_guidance_print > GUIDANCE_PRINT_INTERVAL:
+                print(f"[GUIDANCE] {yaw_cmd}, {pitch_cmd}")
+                last_guidance_print = now
+
+        # -----------------------------------------------------
+        #       UPDATE SHARED FRAME + DISPLAY
+        # -----------------------------------------------------
         with lock:
             current_frame = frame.copy()
 
@@ -321,5 +388,5 @@ def set_bbox():
 
 # ---------------- MAIN ----------------
 if __name__ == '__main__':
-    threading.Thread(target=capture_loop, daemon=True).start()
+    threading.Thread(target=capture_loop_kalman, daemon=True).start()
     app.run(host='0.0.0.0', port=10000, debug=False)

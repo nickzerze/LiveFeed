@@ -455,4 +455,4 @@ def set_bbox():
 
 if __name__ == '__main__':
     threading.Thread(target=capture_loop_yolo_kalman, daemon=True).start()
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=10000, debug=False)
