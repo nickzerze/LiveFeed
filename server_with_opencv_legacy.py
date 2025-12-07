@@ -25,7 +25,7 @@ app = Flask(__name__)
 # print(cv2.__version__)
 #If USE_VIDEO==True -> VIDEO_PATH is used, else if USE_VIDEO==False -> VIDEO_PATH is set to 0
 USE_VIDEO = True
-VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test_720.mp4"  # or set to 0 for webcam
+VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test2.mp4"  # or set to 0 for webcam
 
 # MAVProxy must output to this port (e.g. in MAVProxy: `output add 127.0.0.1:14552`)
 # UDP_IN = 'udpin:0.0.0.0:14550'   # keep QGC on 14550
@@ -47,6 +47,13 @@ current_frame = None
 
 # For throttling console prints
 last_guidance_print = 0.0
+
+# Tracker performance stats
+tracker_timing = {
+    "name": None,
+    "frames": 0,
+    "total_time": 0.0
+}
 
 
 # ------------- GUIDANCE FROM BBOX -------------
@@ -104,7 +111,7 @@ def format_guidance(yaw_deg, pitch_deg):
 
 # ---------------- VIDEO THREAD ----------------
 def capture_loop():
-    global current_frame, tracker, bbox, last_guidance_print
+    global current_frame, tracker, bbox, last_guidance_print, tracker_timing
     cap = cv2.VideoCapture(VIDEO_PATH if USE_VIDEO else 0)
     fps = cap.get(cv2.CAP_PROP_FPS)
     delay = int(1000 / fps) if fps and fps > 0 else 33
@@ -138,7 +145,14 @@ def capture_loop():
         # Update tracker
         if tracker is not None and bbox is not None:
             try:
+                t0 = time.perf_counter()
                 ok, new_box = tracker.update(frame)
+                dt = time.perf_counter() - t0
+
+                tracker_timing["frames"] += 1
+                tracker_timing["total_time"] += dt
+                avg_fps = tracker_timing["frames"] / tracker_timing["total_time"]
+
                 if ok:
                     x, y, w, h = [int(v) for v in new_box]
                     bbox = (x, y, w, h)
@@ -168,16 +182,16 @@ def capture_loop():
                     )
 
                     # text with raw angles
-                    cv2.putText(
-                        frame,
-                        f"Yaw: {yaw_deg:.1f} deg  Pitch: {pitch_deg:.1f} deg",
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 255, 255),
-                        2,
-                        cv2.LINE_AA
-                    )
+                    # cv2.putText(
+                    #     frame,
+                    #     f"Yaw: {yaw_deg:.1f} deg  Pitch: {pitch_deg:.1f} deg",
+                    #     (10, 30),
+                    #     cv2.FONT_HERSHEY_SIMPLEX,
+                    #     0.7,
+                    #     (0, 255, 255),
+                    #     2,
+                    #     cv2.LINE_AA
+                    # )
 
                     # text with discrete commands
                     cv2.putText(
@@ -186,7 +200,7 @@ def capture_loop():
                         (10, 60),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7,
-                        (0, 200, 0),
+                        (0, 255, 0),
                         2,
                         cv2.LINE_AA
                     )
@@ -196,7 +210,27 @@ def capture_loop():
                         (10, 90),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7,
-                        (0, 200, 0),
+                        (0, 255, 0),
+                        2,
+                        cv2.LINE_AA
+                    )
+                    # ================= FPS Overlay =================
+                    average_ms = (tracker_timing["total_time"] / tracker_timing["frames"]) * 1000 if tracker_timing[
+                                                                                                         "frames"] > 0 else 0
+
+                    text = (
+                        f"{tracker_timing['name']}   "
+                        f"aver. frame: {average_ms:.1f} ms   "
+                        f"FPS: {avg_fps:.2f}"
+                    )
+
+                    cv2.putText(
+                        frame,
+                        text,
+                        (10, 120),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 0, 255),  # magenta like your screenshot
                         2,
                         cv2.LINE_AA
                     )
@@ -221,6 +255,25 @@ def capture_loop():
     cv2.destroyAllWindows()
     os._exit(0)
 
+# ---------------- TRACKER FACTORY ----------------
+def create_tracker(name: str):
+    name = name.upper().strip()
+
+    if name == "CSRT":
+        return cv2.TrackerCSRT_create()
+    if name == "KCF":
+        return cv2.TrackerKCF_create()
+    if name == "MOSSE":
+        return cv2.legacy.TrackerMOSSE_create()
+    if name == "MIL":
+        return cv2.legacy.TrackerMIL_create()
+    if name == "TLD":
+        return cv2.legacy.TrackerTLD_create()
+    if name == "MEDIAN":
+        return cv2.legacy.TrackerMedianFlow_create()
+
+    raise ValueError(f"Unknown tracker type: {name}")
+
 
 # ---------------- FLASK ROUTES ----------------
 @app.route("/ping")
@@ -244,7 +297,7 @@ def get_frame():
 @app.route('/bbox', methods=['POST'])
 def set_bbox():
     """Init tracker from Android bbox."""
-    global bbox, tracker, current_frame, last_guidance_print
+    global bbox, tracker, current_frame, last_guidance_print, tracker_timing
 
     data = request.get_json()
 
@@ -294,24 +347,36 @@ def set_bbox():
     h = max(1, min(h, fh - y))
     bbox = (x, y, w, h)
 
-    try:
-        # tracker = cv2.TrackerKCF_create() # BEST 2
-        tracker = cv2.TrackerCSRT_create() # BEST 1
-        # tracker = cv2.legacy.TrackerMOSSE_create()
-        # tracker = cv2.legacy.TrackerMIL_create() # BEST 3
-        # tracker = cv2.legacy.TrackerTLD_create() # BEST 4
-        # tracker = cv2.legacy.TrackerMedianFlow_create() # BEST 5
-        tracker.init(current_frame, bbox)
-        last_guidance_print = 0.0  # reset so we print immediately
-        print(f"[INFO] Tracker initialized at {bbox}")
+    # --------- NEW: Read tracker name from Android ---------
+    tracker_name = data.get("tracker", "CSRT")  # default to CSRT
 
-        # Optional: print initial guidance right away
+    try:
+        tracker = create_tracker(tracker_name)
+    except Exception as e:
+        print(f"[ERROR] Unknown tracker: {tracker_name}")
+        return f"Unknown tracker: {tracker_name}", 400
+
+    # --------- Initialize tracker ---------
+    try:
+        tracker.init(current_frame, bbox)
+
+        # RESET TRACKER PERFORMANCE COUNTERS (FPS measurement)
+        tracker_timing["name"] = tracker_name
+        tracker_timing["frames"] = 0
+        tracker_timing["total_time"] = 0.0
+
+
+        last_guidance_print = 0.0
+
+        print(f"[INFO] Tracker '{tracker_name}' initialized at {bbox}")
+
+        # Initial guidance
         yaw_deg, pitch_deg = bbox_to_angles(bbox, fw, fh)
         yaw_cmd, pitch_cmd = format_guidance(yaw_deg, pitch_deg)
         print(f"[GUIDANCE-INITIAL] {yaw_cmd}, {pitch_cmd}")
 
-        # threading.Thread(target=auto_launch_once, daemon=True).start()
-        return "Bounding box received; tracking & guidance started", 200
+        return f"Tracker {tracker_name} started", 200
+
     except Exception as e:
         print(f"[ERROR] Tracker init error: {e}")
         tracker = None
