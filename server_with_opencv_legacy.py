@@ -25,7 +25,7 @@ app = Flask(__name__)
 # print(cv2.__version__)
 #If USE_VIDEO==True -> VIDEO_PATH is used, else if USE_VIDEO==False -> VIDEO_PATH is set to 0
 USE_VIDEO = True
-VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test2.mp4"  # or set to 0 for webcam
+VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test4.mp4"
 
 # MAVProxy must output to this port (e.g. in MAVProxy: `output add 127.0.0.1:14552`)
 # UDP_IN = 'udpin:0.0.0.0:14550'   # keep QGC on 14550
