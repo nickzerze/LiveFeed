@@ -18,7 +18,7 @@ PORT = 8000                      # ταιριάζει με Android αν χρησ
 
 TRACKER_ORDER = ["CSRT", "KCF", "MOSSE", "MIL", "TLD", "MEDIANFLOW"]
 
-IDLE_TARGET_FPS = 5.0           # πριν το bbox (μόνο για preview/επιλογή)
+IDLE_TARGET_FPS = 3.0           # πριν το bbox (μόνο για preview/επιλογή)
 PREVIEW_ENABLED = True
 PREVIEW_WINDOW = "Android Stream Preview (Laptop) | ESC closes preview only"
 
@@ -169,14 +169,14 @@ def draw_overlay(frame_bgr,
         tx, ty, tw, th = norm_to_px(tr_norm, w, h)
         color = (0, 255, 0) if ok else (0, 255, 255)
         cv2.rectangle(out, (tx, ty), (tx + tw, ty + th), color, 2)
-        label = f"{tracker_name} | idx={idx} | {'OK' if ok else 'LOST'}"
+        label = f"{tracker_name} | frame={idx}"
+        #label = f"{tracker_name} | idx={idx} | {'OK' if ok else 'LOST'}"
         cv2.putText(out, label, (tx, max(20, ty - 8)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     else:
         if tracker_name:
             cv2.putText(out, f"{tracker_name} | idx={idx}", (20, 90),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
     return out
 
 
