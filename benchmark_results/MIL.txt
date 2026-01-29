@@ -1,8 +1,13 @@
-========= MIL =========
-Processed frames: 179
-Lost frames: 0
-Total tracking time: 15.3184 s
-Average tracker FPS: 11.69
-Average tracker time per frame: 85.58 ms
-Wall-clock FPS: 4.89
-Total wall time: 62.20 s
+tracker: MIL
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 52.357
+processed_update_frames: 276
+ok_frames: 276
+lost_frames: 0
+avg_update_ms: 72.012
+max_update_ms: 131.923
+approx_fps: 13.89
+overlay_video_path: benchmark_results\MIL.mp4
+timestamp: 2026-01-27 19:52:36

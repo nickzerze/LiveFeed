@@ -1,0 +1,13 @@
+tracker: MEDIANFLOW
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 1.449
+processed_update_frames: 276
+ok_frames: 181
+lost_frames: 95
+avg_update_ms: 5.140
+max_update_ms: 11.847
+approx_fps: 194.57
+overlay_video_path: benchmark_results\MEDIANFLOW.mp4
+timestamp: 2026-01-27 19:53:30

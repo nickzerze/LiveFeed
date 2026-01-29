@@ -1,0 +1,90 @@
+========================================
+TRACKER: CSRT
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 136.381
+processed_update_frames: 276
+ok_frames: 276
+lost_frames: 0
+avg_update_ms: 37.646
+max_update_ms: 72.550
+approx_fps: 26.56
+overlay_video_path: benchmark_results\CSRT.mp4
+timestamp: 2026-01-27 19:51:48
+
+========================================
+TRACKER: KCF
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 5.888
+processed_update_frames: 276
+ok_frames: 43
+lost_frames: 233
+avg_update_ms: 5.298
+max_update_ms: 28.233
+approx_fps: 188.76
+overlay_video_path: benchmark_results\KCF.mp4
+timestamp: 2026-01-27 19:51:59
+
+========================================
+TRACKER: MOSSE
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 7.573
+processed_update_frames: 276
+ok_frames: 1
+lost_frames: 275
+avg_update_ms: 0.155
+max_update_ms: 0.590
+approx_fps: 6443.03
+overlay_video_path: benchmark_results\MOSSE.mp4
+timestamp: 2026-01-27 19:52:08
+
+========================================
+TRACKER: MIL
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 52.357
+processed_update_frames: 276
+ok_frames: 276
+lost_frames: 0
+avg_update_ms: 72.012
+max_update_ms: 131.923
+approx_fps: 13.89
+overlay_video_path: benchmark_results\MIL.mp4
+timestamp: 2026-01-27 19:52:36
+
+========================================
+TRACKER: TLD
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 45.757
+processed_update_frames: 276
+ok_frames: 275
+lost_frames: 1
+avg_update_ms: 130.347
+max_update_ms: 355.743
+approx_fps: 7.67
+overlay_video_path: benchmark_results\TLD.mp4
+timestamp: 2026-01-27 19:53:20
+
+========================================
+TRACKER: MEDIANFLOW
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 1.449
+processed_update_frames: 276
+ok_frames: 181
+lost_frames: 95
+avg_update_ms: 5.140
+max_update_ms: 11.847
+approx_fps: 194.57
+overlay_video_path: benchmark_results\MEDIANFLOW.mp4
+timestamp: 2026-01-27 19:53:30
+

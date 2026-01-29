@@ -1,8 +1,13 @@
-========= KCF =========
-Processed frames: 180
-Lost frames: 95
-Total tracking time: 1.4376 s
-Average tracker FPS: 125.21
-Average tracker time per frame: 7.99 ms
-Wall-clock FPS: 4.89
-Total wall time: 62.20 s
+tracker: KCF
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 5.888
+processed_update_frames: 276
+ok_frames: 43
+lost_frames: 233
+avg_update_ms: 5.298
+max_update_ms: 28.233
+approx_fps: 188.76
+overlay_video_path: benchmark_results\KCF.mp4
+timestamp: 2026-01-27 19:51:59

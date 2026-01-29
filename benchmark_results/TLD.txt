@@ -1,8 +1,13 @@
-========= TLD =========
-Processed frames: 179
-Lost frames: 3
-Total tracking time: 13.1633 s
-Average tracker FPS: 13.60
-Average tracker time per frame: 73.54 ms
-Wall-clock FPS: 4.89
-Total wall time: 62.20 s
+tracker: TLD
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 45.757
+processed_update_frames: 276
+ok_frames: 275
+lost_frames: 1
+avg_update_ms: 130.347
+max_update_ms: 355.743
+approx_fps: 7.67
+overlay_video_path: benchmark_results\TLD.mp4
+timestamp: 2026-01-27 19:53:20

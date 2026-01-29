@@ -1,8 +1,13 @@
-========= MOSSE =========
-Processed frames: 180
-Lost frames: 0
-Total tracking time: 0.2567 s
-Average tracker FPS: 701.08
-Average tracker time per frame: 1.43 ms
-Wall-clock FPS: 4.89
-Total wall time: 62.20 s
+tracker: MOSSE
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 7.573
+processed_update_frames: 276
+ok_frames: 1
+lost_frames: 275
+avg_update_ms: 0.155
+max_update_ms: 0.590
+approx_fps: 6443.03
+overlay_video_path: benchmark_results\MOSSE.mp4
+timestamp: 2026-01-27 19:52:08

@@ -1,8 +1,13 @@
-========= CSRT =========
-Processed frames: 182
-Lost frames: 0
-Total tracking time: 16.2521 s
-Average tracker FPS: 11.20
-Average tracker time per frame: 89.30 ms
-Wall-clock FPS: 4.89
-Total wall time: 62.20 s
+tracker: CSRT
+video_path: test2.mp4
+init_frame_idx: 27
+total_video_frames: 307
+init_ms: 136.381
+processed_update_frames: 276
+ok_frames: 276
+lost_frames: 0
+avg_update_ms: 37.646
+max_update_ms: 72.550
+approx_fps: 26.56
+overlay_video_path: benchmark_results\CSRT.mp4
+timestamp: 2026-01-27 19:51:48
