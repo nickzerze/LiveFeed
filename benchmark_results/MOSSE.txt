@@ -1,0 +1,8 @@
+========= MOSSE =========
+Processed frames: 180
+Lost frames: 0
+Total tracking time: 0.2567 s
+Average tracker FPS: 701.08
+Average tracker time per frame: 1.43 ms
+Wall-clock FPS: 4.89
+Total wall time: 62.20 s

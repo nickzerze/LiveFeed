@@ -1,0 +1,8 @@
+========= TLD =========
+Processed frames: 179
+Lost frames: 3
+Total tracking time: 13.1633 s
+Average tracker FPS: 13.60
+Average tracker time per frame: 73.54 ms
+Wall-clock FPS: 4.89
+Total wall time: 62.20 s
