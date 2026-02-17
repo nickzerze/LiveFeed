@@ -12,9 +12,9 @@ import cv2
 from flask import Flask, Response, request, jsonify
 
 # -------------------- CONFIG --------------------
-VIDEO_PATH = "test2.mp4"          # <-- βάλε εδώ το 10s video σου
+VIDEO_PATH = "test2.mp4"
 HOST = "0.0.0.0"
-PORT = 8000                      # ταιριάζει με Android αν χρησιμοποιεί :8000
+PORT = 8000
 
 TRACKER_ORDER = ["CSRT", "KCF", "MOSSE", "MIL", "TLD", "MEDIANFLOW"]
 
@@ -23,13 +23,13 @@ PREVIEW_ENABLED = True
 PREVIEW_WINDOW = "Android Stream Preview (Laptop) | ESC closes preview only"
 
 RESULTS_DIR = "benchmark_results"
-SELECTION_SHOW_SECONDS = 0.2      # δείξε selection μόνο για λίγο, τη στιγμή που έγινε
+SELECTION_SHOW_SECONDS = 0.2
 JPEG_QUALITY = 100
 
 # --------- NEW: SAVE OUTPUT VIDEO ---------
 SAVE_OUTPUT_VIDEO = True
-OUTPUT_VIDEO_CODEC = "mp4v"       # δοκίμασε "avc1" ή "H264" αν έχεις, αλλιώς mp4v
-OUTPUT_VIDEO_EXT = ".mp4"         # αν έχεις θέμα, άλλαξέ το σε ".avi"
+OUTPUT_VIDEO_CODEC = "mp4v"
+OUTPUT_VIDEO_EXT = ".mp4"
 # ------------------------------------------
 
 

@@ -11,7 +11,7 @@ import numpy as np
 
 # ===================== OPENCV PERFORMANCE SETTINGS  =====================
 # ===================== ONLY IF OPENCV-PYTHON IS INSTALLED  ==============
-cv2.setNumThreads(1)        # prevent multi-thread jitter on older CPUs
+cv2.setNumThreads(8)        # prevent multi-thread jitter on older CPUs
 cv2.setUseOptimized(True)   # enables SIMD & CPU optimizations
 # ======================================================================
 
@@ -25,7 +25,7 @@ app = Flask(__name__)
 # print(cv2.__version__)
 #If USE_VIDEO==True -> VIDEO_PATH is used, else if USE_VIDEO==False -> VIDEO_PATH is set to 0
 USE_VIDEO = True
-VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\test4.mp4"
+VIDEO_PATH = r"D:\Projects\Thesis\LiveFeed\video.mp4"
 
 # MAVProxy must output to this port (e.g. in MAVProxy: `output add 127.0.0.1:14552`)
 # UDP_IN = 'udpin:0.0.0.0:14550'   # keep QGC on 14550
@@ -224,10 +224,18 @@ def capture_loop():
                         cv2.LINE_AA
                     )
                 else:
+                    # Tracking lost overlay
+                    cv2.putText(
+                        frame,
+                        "TRACKING LOST",
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.9,
+                        (0, 0, 255),  # red
+                        2,
+                        cv2.LINE_AA,
+                    )
                     print("[INFO] Tracking lost")
-                    # Optionally reset tracker & bbox
-                    # tracker = None
-                    # bbox = None
             except Exception as e:
                 print(f"[ERROR] Tracker update failed: {e}")
 
